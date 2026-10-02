@@ -1,0 +1,55 @@
+name: shopee-scraper
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # ทุก 10 นาที (GitHub อาจเลื่อนเวลาได้บ้าง)
+  workflow_dispatch:          # กดรันเองได้จากแท็บ Actions
+
+concurrency:
+  group: shopee
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: เช็กว่ามีลิงค์รอดำเนินการไหม
+        id: check
+        env:
+          EXEC_URL: ${{ secrets.EXEC_URL }}
+          TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          n=$(curl -sL --max-time 60 "$EXEC_URL?action=pending&token=$TOKEN" | jq 'if type=="array" then length else 0 end' 2>/dev/null)
+          case "$n" in ''|*[!0-9]*) n=0 ;; esac
+          echo "pending=$n"
+          if [ "$n" -gt 0 ]; then echo "has=true" >> "$GITHUB_OUTPUT"; else echo "has=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.has == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.has == 'true'
+        with:
+          python-version: '3.12'
+
+      - name: ติดตั้ง Playwright
+        if: steps.check.outputs.has == 'true'
+        run: |
+          pip install playwright requests
+          playwright install --with-deps chromium
+
+      - name: ดึงข้อมูลสินค้า
+        if: steps.check.outputs.has == 'true'
+        env:
+          EXEC_URL: ${{ secrets.EXEC_URL }}
+          TOKEN: ${{ secrets.TOKEN }}
+        run: python scrape.py
+
+      - name: เก็บภาพหน้าจอ (ไว้ตรวจเวลาผิดพลาด)
+        if: always() && steps.check.outputs.has == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: shots/
+          if-no-files-found: ignore
